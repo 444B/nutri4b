@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Meal Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: #080c14; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.25} }
+  @keyframes pulse { 0%,100%{box-shadow:0 0 6px #4ade8088} 50%{box-shadow:0 0 14px #4ade80cc} }
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: #080c14; }
+  ::-webkit-scrollbar-thumb { background: #1e293b; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect } = React;
+
+const isRestDay = (d) => d.getDay() === 0 || d.getDay() === 4;
+const DAY_NAMES = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const toMin = (t) => { const [h,m] = t.split(":").map(Number); return h*60+m; };
+const padZ = (n) => String(n).padStart(2,"0");
+
+const DAY_START = 6*60;
+const DAY_END   = 23*60;
+
+const WORKOUT_EVENTS = [
+  {
+    id:"qb", time:"07:00", endTime:"08:30", label:"QUICK BREAK", type:"meal",
+    tag:null,
+    items:["30g whey protein (Advanced Nutrition or ER4M)","150g 0% Greek yogurt","100g mixed berries"],
+    note:"Mix shake into yogurt. Fastest MPS trigger at peak morning insulin sensitivity.",
+    supplements:["Whey protein shake"],
+  },
+  {
+    id:"m1", time:"08:30", endTime:"12:30", label:"MEAL 1", type:"meal",
+    tag:"CARB + LEAN PROTEIN",
+    items:["150g turkey breast","75g cooked bulgur","Spinach — unlimited"],
+    note:"No eggs here — fat+carb conflict outside post-workout window. Lean protein only with carbs.",
+    supplements:["Omega 3 fish oil"],
+  },
+  {
+    id:"m2", time:"12:30", endTime:"16:30", label:"MEAL 2", type:"meal",
+    tag:"CARB + LEAN PROTEIN",
+    items:["150g turkey breast OR 1 tin tuna in brine","75g cooked bulgur or potato","Broccoli — unlimited","Kimchi — add freely"],
+    note:"Good gut health window. Kimchi aids insulin sensitivity over time.",
+    supplements:[],
+  },
+  {
+    id:"m3", time:"16:30", endTime:"17:30", label:"MEAL 3", type:"meal",
+    tag:"PRE-GYM · CARB + LEAN PROTEIN",
+    items:["150g turkey breast","1 banana","Spinach — unlimited"],
+    note:"Keep fat minimal — fastest gastric emptying before gym. Banana glucose peaks ~17:15, available at gym start.",
+    supplements:[],
+  },
+  {
+    id:"pw", time:"17:30", endTime:"18:00", label:"PRE-WO", type:"supplement",
+    tag:null,
+    items:["ON Pre-Workout — 11g / 1 scoop","Mix with cold water"],
+    note:"Caffeine peaks at gym start 18:00. Contains 3.4g creatine — skip standalone creatine today.",
+    supplements:["ON Pre-Workout · skip standalone creatine"],
+  },
+  {
+    id:"gym", time:"18:00", endTime:"19:30", label:"GYM", type:"gym",
+    tag:"TRAINING WINDOW",
+    items:["Resistance training session","Sip ON Electrolytes during session"],
+    note:"Catecholamines suppress insulin. GLUT4 drives glucose uptake independently of insulin. Prime fat-burn window.",
+    supplements:["ON Electrolyte Powder — ~5g carbs from maltodextrin, count toward daily total"],
+  },
+  {
+    id:"m4", time:"20:30", endTime:"23:00", label:"MEAL 4", type:"meal",
+    tag:"POST-WORKOUT · CARB + LEAN PROTEIN",
+    items:["150g tuna in brine OR turkey/chicken breast","75g cooked red lentil pasta","Broccoli — unlimited","Kimchi — add freely"],
+    note:"GLUT4 still elevated. Lean protein only — no dietary fat competing for storage. Efficient muscle replenishment.",
+    supplements:["Creatine 5g — insulin spike aids uptake"],
+  },
+];
+
+const REST_EVENTS = [
+  {
+    id:"qb", time:"07:00", endTime:"08:30", label:"QUICK BREAK", type:"meal",
+    tag:null,
+    items:["30g whey protein (Advanced Nutrition or ER4M)","150g 0% Greek yogurt","100g mixed berries"],
+    note:"Same as workout day. Morning sensitivity window.",
+    supplements:["Whey protein shake"],
+  },
+  {
+    id:"m1", time:"08:30", endTime:"12:30", label:"MEAL 1", type:"meal",
+    tag:"LAST CARB MEAL TODAY",
+    items:["150g turkey breast","75g cooked bulgur","Spinach — unlimited"],
+    note:"Last starch of the day. No carbs after this on rest days. Keep afternoon insulin low.",
+    supplements:["Omega 3 fish oil"],
+  },
+  {
+    id:"m2", time:"12:30", endTime:"16:30", label:"MEAL 2", type:"meal",
+    tag:"CARB-FREE",
+    items:["150g turkey breast OR 1 tin tuna","2 whole eggs","Spinach — unlimited","Broccoli — unlimited"],
+    note:"Eggs belong here — fat + protein, zero carbs. No insulin-driven fat storage.",
+    supplements:[],
+  },
+  {
+    id:"m3", time:"16:30", endTime:"20:30", label:"MEAL 3", type:"meal",
+    tag:"CARB-FREE",
+    items:["150g turkey or chicken breast","Broccoli — unlimited","Spinach — unlimited","Drizzle of olive oil"],
+    note:"Fat is fine here — no carbs means no insulin to trigger fat storage. Olive oil fills fat target.",
+    supplements:["Creatine 5g standalone — rest day dose"],
+  },
+  {
+    id:"m4", time:"20:30", endTime:"23:00", label:"MEAL 4", type:"meal",
+    tag:"CARB-FREE",
+    items:["150g tuna in brine OR turkey breast","150g 0% Greek yogurt","Cucumber or greens"],
+    note:"Low insulin going into sleep. Maximises overnight GH release and fat oxidation.",
+    supplements:[],
+  },
+];
+
+const TYPE_COLORS = { meal:"#4ade80", supplement:"#facc15", gym:"#60a5fa" };
+
+const formatCountdown = (diffMs) => {
+  if (diffMs <= 0) return "NOW";
+  const totalSec = Math.floor(diffMs/1000);
+  const h = Math.floor(totalSec/3600);
+  const m = Math.floor((totalSec%3600)/60);
+  const s = totalSec%60;
+  if (h>0) return `${h}h ${padZ(m)}m`;
+  if (m>0) return `${m}m ${padZ(s)}s`;
+  return `${s}s`;
+};
+
+// Minimum width % for a block to show its text label
+const MIN_LABEL_WIDTH = 4.5;
+
+function Dashboard() {
+  const [now, setNow] = useState(new Date());
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  const rest   = isRestDay(now);
+  const events = rest ? REST_EVENTS : WORKOUT_EVENTS;
+  const nowMin = now.getHours()*60 + now.getMinutes();
+
+  let currentEvent = null, nextEvent = null;
+  for (let i=0; i<events.length; i++) {
+    const s = toMin(events[i].time);
+    const e = toMin(events[i].endTime);
+    if (nowMin >= s && nowMin < e) { currentEvent = events[i]; nextEvent = events[i+1]||null; break; }
+    if (nowMin < s) { nextEvent = events[i]; break; }
+  }
+  const allDone    = !currentEvent && !nextEvent && nowMin >= toMin(events[events.length-1].endTime);
+  const beforeDay  = !currentEvent && !nextEvent && nowMin < toMin(events[0].time);
+
+  let countdownMs = null;
+  if (nextEvent) {
+    const midnight = new Date(now); midnight.setHours(0,0,0,0);
+    countdownMs = midnight.getTime() + toMin(nextEvent.time)*60000 - now.getTime();
+  }
+
+  const timelinePct = Math.min(100, Math.max(0, ((nowMin - DAY_START)/(DAY_END - DAY_START))*100));
+
+  // Hour ticks to show on lower axis — spaced to avoid crowding
+  const hourTicks = [6,8,10,12,14,16,18,20,22];
+
+  const hh = padZ(now.getHours());
+  const mm = padZ(now.getMinutes());
+  const ss = padZ(now.getSeconds());
+
+  return (
+    <div style={{
+      background:"#080c14", minHeight:"100vh", display:"flex", flexDirection:"column",
+      padding:"24px 32px", fontFamily:"'Courier New',Courier,monospace",
+      color:"#e2e8f0", gap:"18px",
+    }}>
+
+      {/* ── TOP BAR ── */}
+      <div style={{ display:"flex", alignItems:"flex-end", justifyContent:"space-between", flexWrap:"wrap", gap:"12px" }}>
+        <div>
+          <div style={{ fontSize:"62px", fontWeight:"bold", lineHeight:1, letterSpacing:"-2px", color:"#f1f5f9", fontVariantNumeric:"tabular-nums" }}>
+            {hh}<span style={{ color:"#334155", animation:"blink 1s step-end infinite" }}>:</span>{mm}
+            <span style={{ fontSize:"26px", color:"#475569", marginLeft:"6px" }}>{ss}</span>
+          </div>
+          <div style={{ fontSize:"12px", color:"#475569", marginTop:"4px", letterSpacing:"2px" }}>
+            {DAY_NAMES[now.getDay()].toUpperCase()} {now.getDate()} {MONTH_NAMES[now.getMonth()].toUpperCase()} {now.getFullYear()}
+          </div>
+        </div>
+        <div style={{ textAlign:"right" }}>
+          <div style={{
+            display:"inline-block", padding:"6px 20px", borderRadius:"3px",
+            fontSize:"13px", fontWeight:"bold", letterSpacing:"3px",
+            background: rest ? "#1a2a3a" : "#0f2a1a",
+            color:       rest ? "#60a5fa" : "#4ade80",
+            border:`1px solid ${rest ? "#1e3a5f" : "#1a4a2a"}`,
+          }}>{rest ? "REST DAY" : "WORKOUT DAY"}</div>
+          <div style={{ fontSize:"11px", color:"#334155", marginTop:"5px", letterSpacing:"1px" }}>
+            {rest ? "SUN / THU · LOW CARB · NO GYM" : "MON TUE WED FRI SAT · GYM 18:00"}
+          </div>
+        </div>
+      </div>
+
+      {/* ── TIMELINE ── */}
+      <div style={{ userSelect:"none" }}>
+        {/* Bar */}
+        <div style={{
+          position:"relative", height:"44px",
+          background:"#0d1520", borderRadius:"4px",
+          border:"1px solid #1e293b", overflow:"hidden",
+          marginTop:"6px",
+        }}>
+          {events.map((ev) => {
+            const s = toMin(ev.time);
+            const e = toMin(ev.endTime);
+            const left  = ((s - DAY_START)/(DAY_END - DAY_START))*100;
+            const width = ((e - s)      /(DAY_END - DAY_START))*100;
+            const isCurrent = currentEvent?.id === ev.id;
+            const c = TYPE_COLORS[ev.type];
+            const showLabel = width >= MIN_LABEL_WIDTH;
+            return (
+              <div key={ev.id} style={{
+                position:"absolute", left:`${left}%`, width:`${width}%`,
+                top:"3px", bottom:"3px",
+                background: isCurrent ? `${c}30` : `${c}0e`,
+                border:`1px solid ${isCurrent ? c : c+"44"}`,
+                borderRadius:"2px",
+                display:"flex", alignItems:"center", justifyContent:"center",
+                overflow:"hidden",
+                transition:"background 0.4s",
+              }}>
+                {showLabel && (
+                  <span style={{
+                    fontSize:"9px", letterSpacing:"0.5px",
+                    color: isCurrent ? c : c+"99",
+                    fontWeight: isCurrent ? "bold" : "normal",
+                    whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis",
+                    padding:"0 4px",
+                  }}>{ev.label}</span>
+                )}
+              </div>
+            );
+          })}
+
+          {/* Now line */}
+          {timelinePct >= 0 && timelinePct <= 100 && (
+            <div style={{
+              position:"absolute", left:`${timelinePct}%`,
+              top:0, bottom:0, width:"2px",
+              background:"#f1f5f9cc",
+              zIndex:10,
+              boxShadow:"0 0 6px #f1f5f944",
+            }}>
+              <div style={{
+                position:"absolute", top:"-1px", left:"50%",
+                transform:"translateX(-50%)",
+                width:"7px", height:"7px",
+                background:"#f1f5f9", borderRadius:"50%",
+              }}/>
+            </div>
+          )}
+        </div>
+
+        {/* Hour ticks below */}
+        <div style={{ position:"relative", height:"18px", marginTop:"3px" }}>
+          {hourTicks.map(h => {
+            const left = ((h*60 - DAY_START)/(DAY_END - DAY_START))*100;
+            return (
+              <div key={h} style={{
+                position:"absolute", left:`${left}%`,
+                transform:"translateX(-50%)",
+                fontSize:"9px", color:"#334155", letterSpacing:"0.5px",
+              }}>{padZ(h)}:00</div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ── MAIN PANELS ── */}
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"16px", flex:1 }}>
+
+        {/* LEFT — CURRENT */}
+        <div style={{
+          background:"#0d1520",
+          border:`1px solid ${currentEvent ? TYPE_COLORS[currentEvent.type]+"55" : "#1e293b"}`,
+          borderRadius:"6px", padding:"20px 24px",
+          display:"flex", flexDirection:"column", gap:"12px",
+        }}>
+          <div style={{ fontSize:"10px", letterSpacing:"3px", color:"#334155" }}>▶ RIGHT NOW</div>
+
+          {allDone && <div style={{ color:"#475569", fontSize:"16px" }}>Day complete. Rest up. Sleep by 22:30.</div>}
+          {beforeDay && (
+            <div>
+              <div style={{ fontSize:"20px", color:"#4ade80", fontWeight:"bold" }}>Morning incoming</div>
+              <div style={{ fontSize:"13px", color:"#475569", marginTop:"8px" }}>Quick Break at 07:00 — prep your shake and berries tonight.</div>
+            </div>
+          )}
+          {!currentEvent && !allDone && !beforeDay && (
+            <div>
+              <div style={{ fontSize:"18px", color:"#64748b" }}>Between meals</div>
+              <div style={{ fontSize:"13px", color:"#334155", marginTop:"6px" }}>Stay hydrated — sip from your 4L + High5 Zero electrolyte tablet</div>
+            </div>
+          )}
+
+          {currentEvent && (() => {
+            const c = TYPE_COLORS[currentEvent.type];
+            return (
+              <>
+                <div>
+                  <div style={{ display:"flex", alignItems:"center", gap:"10px" }}>
+                    <div style={{ width:"8px", height:"8px", borderRadius:"50%", background:c, animation:"pulse 2s ease-in-out infinite" }}/>
+                    <span style={{ fontSize:"22px", fontWeight:"bold", color:c }}>{currentEvent.label}</span>
+                  </div>
+                  {currentEvent.tag && (
+                    <div style={{
+                      display:"inline-block", marginTop:"6px",
+                      padding:"2px 10px", borderRadius:"2px",
+                      fontSize:"9px", letterSpacing:"2px", fontWeight:"bold",
+                      background:c+"22", color:c,
+                    }}>{currentEvent.tag}</div>
+                  )}
+                </div>
+
+                <div style={{ display:"flex", flexDirection:"column", gap:"7px" }}>
+                  {currentEvent.items.map((item,i) => (
+                    <div key={i} style={{ display:"flex", alignItems:"flex-start", gap:"8px" }}>
+                      <span style={{ color:c, flexShrink:0, marginTop:"1px" }}>—</span>
+                      <span style={{ fontSize:"14px", color:"#cbd5e1", lineHeight:"1.4" }}>{item}</span>
+                    </div>
+                  ))}
+                </div>
+
+                {currentEvent.supplements.length > 0 && (
+                  <div style={{
+                    background:"#facc1511", border:"1px solid #facc1533",
+                    borderRadius:"4px", padding:"10px 14px",
+                  }}>
+                    <div style={{ fontSize:"9px", letterSpacing:"2px", color:"#facc15", marginBottom:"6px" }}>SUPPLEMENTS</div>
+                    {currentEvent.supplements.map((s,i) => (
+                      <div key={i} style={{ fontSize:"12px", color:"#fde68a", lineHeight:"1.6" }}>· {s}</div>
+                    ))}
+                  </div>
+                )}
+
+                <div style={{ fontSize:"11px", color:"#475569", lineHeight:"1.5", borderTop:"1px solid #1e293b", paddingTop:"10px" }}>
+                  {currentEvent.note}
+                </div>
+                <div style={{ fontSize:"10px", color:"#334155" }}>
+                  Window: {currentEvent.time} → {currentEvent.endTime}
+                </div>
+              </>
+            );
+          })()}
+        </div>
+
+        {/* RIGHT — NEXT */}
+        <div style={{
+          background:"#0a1020", border:"1px solid #1e293b",
+          borderRadius:"6px", padding:"20px 24px",
+          display:"flex", flexDirection:"column", gap:"12px",
+          opacity: nextEvent ? 1 : 0.35,
+        }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+            <div style={{ fontSize:"10px", letterSpacing:"3px", color:"#334155" }}>⏭ UP NEXT</div>
+            {nextEvent && countdownMs !== null && (
+              <div style={{
+                fontSize:"24px", fontWeight:"bold",
+                color: countdownMs < 30*60000 ? "#f97316" : "#475569",
+                fontVariantNumeric:"tabular-nums", letterSpacing:"-1px",
+              }}>{formatCountdown(countdownMs)}</div>
+            )}
+          </div>
+
+          {!nextEvent && <div style={{ fontSize:"13px", color:"#334155" }}>No more events today.</div>}
+
+          {nextEvent && (() => {
+            const cb = TYPE_COLORS[nextEvent.type];
+            return (
+              <>
+                <div>
+                  <div style={{ fontSize:"20px", fontWeight:"bold", color:"#64748b" }}>{nextEvent.label}</div>
+                  <div style={{ fontSize:"11px", color:"#334155", marginTop:"3px" }}>at {nextEvent.time}</div>
+                  {nextEvent.tag && (
+                    <div style={{
+                      display:"inline-block", marginTop:"5px",
+                      padding:"2px 8px", borderRadius:"2px",
+                      fontSize:"9px", letterSpacing:"2px",
+                      background:cb+"11", color:"#475569",
+                    }}>{nextEvent.tag}</div>
+                  )}
+                </div>
+
+                <div style={{ display:"flex", flexDirection:"column", gap:"6px" }}>
+                  {nextEvent.items.map((item,i) => (
+                    <div key={i} style={{ display:"flex", alignItems:"flex-start", gap:"8px" }}>
+                      <span style={{ color:"#334155", flexShrink:0, marginTop:"1px" }}>—</span>
+                      <span style={{ fontSize:"13px", color:"#475569", lineHeight:"1.4" }}>{item}</span>
+                    </div>
+                  ))}
+                </div>
+
+                {nextEvent.supplements.length > 0 && (
+                  <div style={{
+                    background:"#facc1508", border:"1px solid #facc1520",
+                    borderRadius:"4px", padding:"8px 12px",
+                  }}>
+                    {nextEvent.supplements.map((s,i) => (
+                      <div key={i} style={{ fontSize:"11px", color:"#78716c" }}>· {s}</div>
+                    ))}
+                  </div>
+                )}
+
+                <div style={{ fontSize:"11px", color:"#334155", lineHeight:"1.5", borderTop:"1px solid #1e293b", paddingTop:"10px" }}>
+                  {nextEvent.note}
+                </div>
+              </>
+            );
+          })()}
+        </div>
+      </div>
+
+      {/* ── FOOTER ── */}
+      <div style={{
+        display:"flex", justifyContent:"space-between", alignItems:"center",
+        borderTop:"1px solid #0d1520", paddingTop:"10px", flexWrap:"wrap", gap:"8px",
+      }}>
+        <div style={{ fontSize:"10px", color:"#1e293b", letterSpacing:"2px" }}>
+          TARGET · 1696 KCAL · {rest ? "185P / 65C / 64F" : "185P / 140C / 44F"} · 4L WATER DAILY
+        </div>
+        <div style={{ fontSize:"10px", color:"#1e293b", letterSpacing:"1px" }}>
+          REST DAYS: SUN · THU
+        </div>
+      </div>
+
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<Dashboard/>);
+</script>
+</body>
+</html>
